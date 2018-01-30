@@ -1,5 +1,7 @@
 """ script to scrap IPEDS website for .csv files """
 import argparse
+import zipfile
+import shutil
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -52,16 +54,37 @@ def get_dlinks():
                 # write the partial url ("data/<filename>.zip") into file
                 out_file.write("{}\n".format(line))
 
+def unzip_delete(filename):
+    """ unzips zip files and deletes zip file, take in filename without file extension """
+    with zipfile.ZipFile('./data/{}.zip'.format(filename),"r") as zip_ref:
+        zip_ref.extractall('./csv/{}.zip'.format(filename))
+    shutil.move('./csv/{}.zip/{}.csv'.format(filename, filename.lower()), 
+                './csv/{}.csv'.format(str(filename).lower()))
+    shutil.rmtree('./csv/{}.zip'.format(filename))
+
 def single_download(year, prefix='HD', url='data/', file_ex='.zip'):
-    """ downloads a single .zip file """
+    """ downloads a single year's .zip data file """
     res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
                        .format(url, prefix, year, file_ex))
     if res.status_code == 200:
-        with open("./data/{}{}.zip".format(prefix, year), 'wb') as out_file:
+        with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
             out_file.write(res.content)
+        unzip_delete('{}{}'.format(prefix, year))
         return 0
     else:
         return -1
+
+def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zip'): 
+    """ downloads all .zip data files from the year_begin to year_end """
+    if (year_begin > year_end):
+        tmp = year_begin
+        year_begin = year_end
+        year_end = tmp
+
+    for year in range(year_begin, year_end + 1):
+        print('Downloading {}{} File'.format(prefix, year))
+        single_download(year, prefix='HD', url='data/', file_ex='.zip')
+        print('...Download {}{} File Complete'.format(prefix, year))
 
 def downloader(prefix='HD', check=False, check_all=False):
     """ parses file (download_links.txt) generates by g_dlinks()
@@ -77,7 +100,7 @@ def downloader(prefix='HD', check=False, check_all=False):
                 res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 print(line + ' ' + str(res))
             elif line.find(prefix) == -1:
-                # skip the current line
+                # skip the current line if not the prefix we want
                 continue
             else:
                 if check is True:
@@ -88,9 +111,12 @@ def downloader(prefix='HD', check=False, check_all=False):
                     # download file
                     res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                     if res.status_code == 200:
-                        with open("./data/{}".format(line[line.find('/') + 1 :]),
+                        filename = line[line.find('/') + 1 :]
+                        with open("./data/{}".format(filename),
                                   'wb') as out_file:
                             out_file.write(res.content)
+                        print('...Download {}.zip Complete'.format(filename))
+                        unzip_delete('{}{}'.format(prefix, filename[: filename.find('.zip')]))
                     else:
                         # skip the current line
                         continue
@@ -114,6 +140,11 @@ def main():
     parser.add_argument('-y',
                         '--year',
                         help='input one number indicating the year you want')
+    parser.add_argument('-s',
+                        '--series',
+                        nargs=2,
+                        help='input two numbers indicating series of years you want \
+                        (from year of first number to year of second number')
     parser.add_argument('-c',
                         '--check',
                         help='checks to see if the files \
@@ -151,13 +182,19 @@ def main():
     if args.check and args.checkAll is False:
         print('Checking {} Files'.format(args.prefix))
         downloader(check=True)
-    elif args.year:
+    
+    if args.year:
         print('Year: {}'.format(args.year))
         print('Downloading {}{} File'.format(args.prefix, args.year))
-        if single_download(args.year) == 0:
+        if single_download(args.year, prefix=args.prefix) == 0:
             print('...Download Complete')
         else:
             print('...File Does Not Exist')
+    
+    if args.series:
+        print('Years: {} - {}'.format(args.series[0], args.series[1]))
+        series_download(int(args.series[0]), int(args.series[1]))
+
     else:
         print('Downloading All {} Files...'.format(args.prefix))
         downloader(prefix=args.prefix)
