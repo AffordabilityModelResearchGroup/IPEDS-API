@@ -2,3 +2,7 @@
 \.vscode/
 
 geckodriver\.log
+
+data/
+
+csv/
