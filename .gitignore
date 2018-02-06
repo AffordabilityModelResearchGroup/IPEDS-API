@@ -1,7 +1,7 @@
 
-\.vscode/
+\.vs/
 
-geckodriver\.log
+csv/
 
 data/
 

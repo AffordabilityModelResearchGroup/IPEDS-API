@@ -62,17 +62,23 @@ def unzip_delete(filename):
                 './csv/{}.csv'.format(str(filename).lower()))
     shutil.rmtree('./csv/{}.zip'.format(filename))
 
-def single_download(year, prefix='HD', url='data/', file_ex='.zip'):
+def single_download(year, check=False, prefix='HD', url='data/', file_ex='.zip'):
     """ downloads a single year's .zip data file """
-    res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
-                       .format(url, prefix, year, file_ex))
-    if res.status_code == 200:
-        with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
-            out_file.write(res.content)
-        unzip_delete('{}{}'.format(prefix, year))
-        return 0
+    if check is True:
+        # checks if file exists
+        res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
+                        .format(url, prefix, year, file_ex))
+        print('{}{}{} {}'.format(prefix, year, file_ex, str(res)))
     else:
-        return -1
+        res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
+                        .format(url, prefix, year, file_ex))
+        if res.status_code == 200:
+            with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
+                out_file.write(res.content)
+            unzip_delete('{}{}'.format(prefix, year))
+            return 0
+        else:
+            return -1
 
 def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zip'): 
     """ downloads all .zip data files from the year_begin to year_end """
@@ -139,23 +145,28 @@ def main():
                         default is "HD" (for getting HDxxxx.zip files for example)')
     parser.add_argument('-y',
                         '--year',
-                        help='input one number indicating the year you want')
+                        help='input one number indicating the year you want \
+                        and downloads it with specified prefix')
     parser.add_argument('-s',
                         '--series',
                         nargs=2,
                         help='input two numbers indicating series of years you want \
-                        (from year of first number to year of second number')
+                        (from year of first number to year of second number) \
+                        and downloads them with specified prefix')
     parser.add_argument('-c',
                         '--check',
                         help='checks to see if the files \
-                        (with the given prefix - default is HD - and year) exist',
-                        action='store_true')
+                        (with the given prefix - default is HD - and year) exist')
     parser.add_argument('-a',
                         '--checkAll',
                         help='checks to see if any files exist \
                         (note that checkAll overrides all other options), \
                         <Response 200> indicates that it does \
                         (google search HTTP codes for other troubleshooting)',
+                        action='store_true')
+    parser.add_argument('-d',
+                        '--downloadAll',
+                        help='downloads all files with specified prefix',
                         action='store_true')
 
     # read arguments from the command line
@@ -179,9 +190,10 @@ def main():
         args.prefix = 'HD'
     print('Prefix Used: {}'.format(args.prefix))
 
-    if args.check and args.checkAll is False:
-        print('Checking {} Files'.format(args.prefix))
-        downloader(check=True)
+    if args.check:
+        print('Checking {}{} File'.format(args.prefix, args.check))
+        single_download(args.check, prefix='HD', check=True)
+        return
     
     if args.year:
         print('Year: {}'.format(args.year))
@@ -190,12 +202,14 @@ def main():
             print('...Download Complete')
         else:
             print('...File Does Not Exist')
+        return
     
     if args.series:
         print('Years: {} - {}'.format(args.series[0], args.series[1]))
         series_download(int(args.series[0]), int(args.series[1]))
+        return
 
-    else:
+    if args.downloadAll:
         print('Downloading All {} Files...'.format(args.prefix))
         downloader(prefix=args.prefix)
         print('...Download Complete')
