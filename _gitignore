@@ -1,0 +1,8 @@
+
+\.vscode/
+
+geckodriver\.log
+
+csv/
+
+data/
