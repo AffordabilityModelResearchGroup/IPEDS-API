@@ -6,5 +6,5 @@ import os
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-call('python ./IPEDS-API/data_script.py -d'.split(' '))
-call('python generator.py')
+call('python data_script.py -d'.split(' '))
+call('python generator.py'.split(' '))

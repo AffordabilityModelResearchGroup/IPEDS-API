@@ -36,6 +36,8 @@ def generate_model():
                 with open('./csv/{}.csv'.format(name)) as csvfile:
                     fields = str(csvfile.readline()).strip().split(',')
                     for field in fields:
+                        field = field.strip("\"")
+                        field = field.strip("\'")
                         model.write('    {} = models.TextField()\n'.format(field))
                 model.write('\n')
 

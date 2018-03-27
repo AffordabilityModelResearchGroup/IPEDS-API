@@ -5,14 +5,21 @@ import shutil
 import glob
 import re
 import requests
+import os
+import errno
+
 from bs4 import BeautifulSoup
 
 from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
 # from selenium.webdriver.common.keys import Keys
 
-def scrape():
+
+def scrape(output_file='./cache/ipeds_data.html'):
     """ get html page that lists its links to .zip files """
-    driver = webdriver.Firefox()
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    driver = webdriver.Chrome(options=options)
     # https://nces.ed.gov/ipeds/datacenter/Default.aspx?gotoReportId=7&fromIpeds=true
     driver.get('https://nces.ed.gov/ipeds/datacenter/login.aspx?gotoReportId=7')
 
@@ -22,22 +29,30 @@ def scrape():
     driver.implicitly_wait(10)
     button = driver.find_element_by_id('contentPlaceHolder_ibtnContinue')
     button.click()
-    with open('./cache/ipeds_data.html', 'w') as out_file:
-        out_file.write(driver.page_source)
 
-def get_dlinks():
+    if not os.path.exists(os.path.dirname(output_file)):
+        try:
+            os.makedirs(os.path.dirname(output_file))
+        except OSError as exc: # Guard against race condition
+            if exc.errno != errno.EEXIST:
+                raise
+
+    with open(output_file, 'w') as out_file:
+        out_file.write(driver.page_source.encode('utf-8'))
+    driver.close()
+
+
+def get_dlinks(ipeds_data_file='./cache/ipeds_data.html', dlinks_file='./cache/download_links.txt'):
     """ parses html for download links """
-    html_doc = ''
-
     # input everything in HTML file into html_doc for processing
-    with open('./cache/ipeds_data.html') as in_file:
+    with open(ipeds_data_file) as in_file:
         html_doc = str(in_file.readlines())
 
     # initialize BeautifulSoup parser for html_doc
     soup = BeautifulSoup(html_doc, 'html.parser')
 
     # filter html_doc for data we want
-    with open('./cache/download_links.txt', 'w') as out_file:
+    with open(dlinks_file, 'w') as out_file:
         # find all anchor tags with href property = 'data'
         for line in soup.find_all(href=re.compile("data")):
             # convert working line into string for easier processing
@@ -55,6 +70,7 @@ def get_dlinks():
                 # write the partial url ("data/<filename>.zip") into file
                 out_file.write("{}\n".format(line))
 
+
 def unzip_delete(filename):
     """ unzips zip files and deletes zip file, take in filename without file extension """
     # unzip zip files
@@ -66,14 +82,12 @@ def unzip_delete(filename):
     # these next two pieces of code:
     
     # move csv file out of folder
-    for file in glob.glob('./csv/{}/*'.format(filename)):
-        # print(file)
-        # shutil.copy(file, dest_dir)
-        # './csv/{}/{}.csv'.format(filename, filename[: filename.find('.')].lower())
-        shutil.move(file, './csv/')    
+    for unzipped_file in glob.glob('./csv/{}/*'.format(filename)):
+        shutil.move(unzipped_file, './csv/')
     
     # delete (now) empty folder
     shutil.rmtree('./csv/{}'.format(filename))
+
 
 def single_download(year, check=False, prefix='HD', url='data/', file_ex='.zip'):
     """ downloads a single year's .zip data file """
@@ -93,6 +107,7 @@ def single_download(year, check=False, prefix='HD', url='data/', file_ex='.zip')
         else:
             return -1
 
+
 def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zip'): 
     """ downloads all .zip data files from the year_begin to year_end """
     if (year_begin > year_end):
@@ -105,7 +120,8 @@ def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zi
         single_download(year, prefix='HD', url='data/', file_ex='.zip')
         print('...Download {}{} File Complete'.format(prefix, year))
 
-def downloader(prefix='HD', check=False, check_all=False):
+
+def downloader(prefix='HD', check_all=False):
     """ parses file (download_links.txt) generates by g_dlinks()
     and downloads (or checks) .zip files """
     # download wanted files
@@ -122,23 +138,20 @@ def downloader(prefix='HD', check=False, check_all=False):
                 # skip the current line if not the prefix we want
                 continue
             else:
-                if check is True:
-                    # checks if file exists
-                    res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
-                    print(line + ' ' + str(res))
+                # download file
+                res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
+                if res.status_code == 200:
+                    filename = line[line.find('/') + 1 :]
+                    with open('./data/{}'.format(filename),
+                              'wb') as out_file:
+                        out_file.write(res.content)
+                    print('...Download {} Complete'.format(filename))
+                    unzip_delete('{}'.format(filename))
                 else:
-                    # download file
-                    res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
-                    if res.status_code == 200:
-                        filename = line[line.find('/') + 1 :]
-                        with open('./data/{}'.format(filename),
-                                  'wb') as out_file:
-                            out_file.write(res.content)
-                        print('...Download {} Complete'.format(filename))
-                        unzip_delete('{}'.format(filename))
-                    else:
-                        # skip the current line
-                        continue
+                    print(str(res.headers))
+                    # skip the current line
+                    continue
+
 
 def main():
     """ main subroutine """
@@ -146,6 +159,7 @@ def main():
 
     # initiate the parser
     parser = argparse.ArgumentParser(description=des)
+    year_group = parser.add_mutually_exclusive_group()
     # define argument options
     parser.add_argument('-f',
                         '--fresh',
@@ -156,11 +170,11 @@ def main():
                         '--prefix',
                         help='define the prefix of the files wanted, \
                         default is "HD" (for getting HDxxxx.zip files for example)')
-    parser.add_argument('-y',
+    year_group.add_argument('-y',
                         '--year',
                         help='input one number indicating the year you want \
                         and downloads it with specified prefix')
-    parser.add_argument('-s',
+    year_group.add_argument('-s',
                         '--series',
                         nargs=2,
                         help='input two numbers indicating series of years you want \
@@ -226,6 +240,7 @@ def main():
         print('Downloading All {} Files...'.format(args.prefix))
         downloader(prefix=args.prefix)
         print('...Download Complete')
+
 
 if __name__ == '__main__':
     main()
