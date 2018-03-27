@@ -2,6 +2,7 @@
 import argparse
 import zipfile
 import shutil
+import glob
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -56,11 +57,23 @@ def get_dlinks():
 
 def unzip_delete(filename):
     """ unzips zip files and deletes zip file, take in filename without file extension """
-    with zipfile.ZipFile('./data/{}.zip'.format(filename),"r") as zip_ref:
-        zip_ref.extractall('./csv/{}.zip'.format(filename))
-    shutil.move('./csv/{}.zip/{}.csv'.format(filename, filename.lower()), 
-                './csv/{}.csv'.format(str(filename).lower()))
-    shutil.rmtree('./csv/{}.zip'.format(filename))
+    # unzip zip files
+    with zipfile.ZipFile('./data/{}'.format(filename),"r") as zip_ref:
+        zip_ref.extractall('./csv/{}'.format(filename))
+    
+    # zipfile unzips files but keeps the directory structure
+    # i.e. file.zip becomse file.zip > fileCSV.csv
+    # these next two pieces of code:
+    
+    # move csv file out of folder
+    for file in glob.glob('./csv/{}/*'.format(filename)):
+        # print(file)
+        # shutil.copy(file, dest_dir)
+        # './csv/{}/{}.csv'.format(filename, filename[: filename.find('.')].lower())
+        shutil.move(file, './csv/')    
+    
+    # delete (now) empty folder
+    shutil.rmtree('./csv/{}'.format(filename))
 
 def single_download(year, check=False, prefix='HD', url='data/', file_ex='.zip'):
     """ downloads a single year's .zip data file """
@@ -118,11 +131,11 @@ def downloader(prefix='HD', check=False, check_all=False):
                     res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                     if res.status_code == 200:
                         filename = line[line.find('/') + 1 :]
-                        with open("./data/{}".format(filename),
+                        with open('./data/{}'.format(filename),
                                   'wb') as out_file:
                             out_file.write(res.content)
-                        print('...Download {}.zip Complete'.format(filename))
-                        unzip_delete('{}{}'.format(prefix, filename[: filename.find('.zip')]))
+                        print('...Download {} Complete'.format(filename))
+                        unzip_delete('{}'.format(filename))
                     else:
                         # skip the current line
                         continue
