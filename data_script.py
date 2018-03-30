@@ -129,19 +129,19 @@ def downloader(prefix='HD', check_all=False):
         for line in in_file:
             line = str(line)
             line = line.strip()
+            filename = os.path.split(line)[1]
 
             if check_all is True:
                 # checks if any file exists
                 res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 print(line + ' ' + str(res))
-            elif line.find(prefix) == -1:
+            elif not filename.startswith(prefix):
                 # skip the current line if not the prefix we want
                 continue
             else:
                 # download file
                 res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 if res.status_code == 200:
-                    filename = line[line.find('/') + 1 :]
                     with open('./data/{}'.format(filename),
                               'wb') as out_file:
                         out_file.write(res.content)
