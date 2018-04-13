@@ -7,10 +7,13 @@ import re
 import requests
 import os
 import errno
+import pandas
 
 from bs4 import BeautifulSoup
 
 from selenium import webdriver
+from sqlalchemy import create_engine, Table, MetaData
+from sqlalchemy.exc import NoSuchTableError
 from selenium.webdriver.firefox.options import Options
 # from selenium.webdriver.common.keys import Keys
 
@@ -53,6 +56,7 @@ def get_dlinks(ipeds_data_file='./cache/ipeds_data.html', dlinks_file='./cache/d
 
     # filter html_doc for data we want
     with open(dlinks_file, 'w') as out_file:
+        link_set = set()
         # find all anchor tags with href property = 'data'
         for line in soup.find_all(href=re.compile("data")):
             # convert working line into string for easier processing
@@ -64,29 +68,37 @@ def get_dlinks(ipeds_data_file='./cache/ipeds_data.html', dlinks_file='./cache/d
             # filer line down "data/<filename>.zip" (ex. "data/HD2015.zip")
             line = line[index_begin : index_end]
             # filter out empty lines
-            if line == '':
+            if line == '' or \
+                    "Stata" in line or \
+                    "SPS" in line or \
+                    "Dict" in line or \
+                    "SAS" in line:
                 continue
             else:
                 # write the partial url ("data/<filename>.zip") into file
-                out_file.write("{}\n".format(line))
+                link_set.add(line)
+
+        for link in link_set:
+            out_file.write("{}\n".format(link))
 
 
-def unzip_delete(filename):
+def unzip_delete(zip_filename):
     """ unzips zip files and deletes zip file, take in filename without file extension """
     # unzip zip files
-    with zipfile.ZipFile('./data/{}'.format(filename),"r") as zip_ref:
-        zip_ref.extractall('./csv/{}'.format(filename))
+    with zipfile.ZipFile('./data/{}'.format(zip_filename), "r") as zip_ref:
+        zip_ref.extractall('./csv/{}'.format(zip_filename))
     
     # zipfile unzips files but keeps the directory structure
     # i.e. file.zip becomse file.zip > fileCSV.csv
     # these next two pieces of code:
     
     # move csv file out of folder
-    for unzipped_file in glob.glob('./csv/{}/*'.format(filename)):
-        shutil.move(unzipped_file, './csv/')
+    for unzipped_file in glob.glob('./csv/{}/*'.format(zip_filename)):
+        filename = os.path.split(unzipped_file)[1]
+        shutil.move(unzipped_file, os.path.join('./csv/', filename))
     
     # delete (now) empty folder
-    shutil.rmtree('./csv/{}'.format(filename))
+    shutil.rmtree('./csv/{}'.format(zip_filename))
 
 
 def single_download(year, check=False, prefix='HD', url='data/', file_ex='.zip'):
@@ -135,7 +147,7 @@ def downloader(prefix='HD', check_all=False):
                 # checks if any file exists
                 res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 print(line + ' ' + str(res))
-            elif not filename.startswith(prefix):
+            elif not filename.startswith(prefix) or "_" in filename:
                 # skip the current line if not the prefix we want
                 continue
             else:
@@ -151,6 +163,48 @@ def downloader(prefix='HD', check_all=False):
                     print(str(res.headers))
                     # skip the current line
                     continue
+
+
+def process_csv(prefix_list=['hd'], copy_to_database=True):
+    
+    sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
+
+    # # drop the existing table
+    # meta = MetaData(sql_engine)
+    # try:
+    #     ipeds_table = Table('IPEDS', meta, autoload=True)
+    #     ipeds_table.drop(sql_engine)
+    # except NoSuchTableError:
+    #     pass
+
+    # Process each csv file
+    for prefix in prefix_list:
+        sql_engine.execute("drop view if exists " + prefix + ";")
+        create_view_statement = "CREATE OR REPLACE VIEW public." + prefix + " AS "
+        common_column_statement = ""
+        for file_path in sorted(glob.glob("./csv/{0}*.csv".format(prefix)), reverse=True):
+            # IPEDS seems to use a western encoding instead of UTF-8
+            csv = pandas.read_csv(file_path, encoding="windows-1252")
+            # Convert column names to lowercase
+            for column in csv.columns:
+                csv.rename(columns={column:column.strip("\"").lower()}, inplace=True)
+            file_name = os.path.basename(file_path)
+            file_name_no_ext, extension = os.path.splitext(file_name)
+            print("Processing " + file_name_no_ext)
+            year = file_name_no_ext.lower().strip(prefix.lower())
+            csv["year"] = int(year)
+            csv.to_csv("last_processed.csv")
+            if copy_to_database:
+                csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
+                common_column_statement += "select column_name, data_type from information_schema.columns" \
+                                           " where table_name = '{}' intersect ".format(file_name_no_ext)
+                create_view_statement += "select {{0}} from {} union ".format(file_name_no_ext)
+
+        common_column_statement = common_column_statement[:-len("intersect")-1]
+        create_view_statement = create_view_statement[:-len("union")-1]
+
+        common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
+        sql_engine.execute(create_view_statement.format(common_column_names))
 
 
 def main():
@@ -195,6 +249,8 @@ def main():
                         '--downloadAll',
                         help='downloads all files with specified prefix',
                         action='store_true')
+    parser.add_argument('--proc',
+                        action='store_true')
 
     # read arguments from the command line
     args = parser.parse_args()
@@ -226,6 +282,7 @@ def main():
         print('Year: {}'.format(args.year))
         print('Downloading {}{} File'.format(args.prefix, args.year))
         if single_download(args.year, prefix=args.prefix) == 0:
+            process_csv()
             print('...Download Complete')
         else:
             print('...File Does Not Exist')
@@ -234,12 +291,16 @@ def main():
     if args.series:
         print('Years: {} - {}'.format(args.series[0], args.series[1]))
         series_download(int(args.series[0]), int(args.series[1]))
+        process_csv()
         return
 
     if args.downloadAll:
         print('Downloading All {} Files...'.format(args.prefix))
         downloader(prefix=args.prefix)
+        process_csv()
         print('...Download Complete')
+    if args.proc:
+        process_csv()
 
 
 if __name__ == '__main__':
