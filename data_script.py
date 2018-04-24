@@ -133,7 +133,7 @@ def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zi
         print('...Download {}{} File Complete'.format(prefix, year))
 
 
-def downloader(prefix='HD', check_all=False):
+def downloader(prefix='HD', suffix='', check_all=False):
     """ parses file (download_links.txt) generates by g_dlinks()
     and downloads (or checks) .zip files """
     # download wanted files
@@ -142,13 +142,25 @@ def downloader(prefix='HD', check_all=False):
             line = str(line)
             line = line.strip()
             filename = os.path.split(line)[1]
+            suffix_start_index = filename.find(suffix, filename.find('_'), filename.find('.zip'))
 
             if check_all is True:
                 # checks if any file exists
                 res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 print(line + ' ' + str(res))
-            elif not filename.startswith(prefix) or "_" in filename:
-                # skip the current line if not the prefix we want
+            elif (
+                    ((not filename.startswith(prefix)) and suffix != '') or 
+                    ("_" in filename and suffix == '') or 
+                    not (filename[ suffix_start_index : filename.find('.zip') ] == suffix and suffix != '')
+                ):
+                # skip the current line if not the prefix or suffix we want
+                # print(((not filename.startswith(prefix)) and suffix != ''))
+                # print(("_" in filename and suffix == ''))
+                # print(not (filename[ suffix_start_index : filename.find('.zip') ] == suffix and suffix != ''))
+                # print(filename)
+                # print(filename[ suffix_start_index : filename.find('.zip') ])
+                # assert suffix_start_index == -1, "\nIncorrectly Filtered Out: \n{}\n {}\n {}\n".format(line, filename, suffix)
+                # print
                 continue
             else:
                 # download file
@@ -165,7 +177,13 @@ def downloader(prefix='HD', check_all=False):
                     continue
 
 
-def process_csv(prefix_list=['hd'], copy_to_database=True):
+def process_csv(prefix_list=['hd', 'ic'], suffix='ay', copy_to_database=True):
+
+    # we need to pad suffix with '_' to match file names
+    # i.e. file is name ic2000_ay.csv so pad a suffix, 'AY', with '_'
+    if (suffix != ''):
+        suffix = '_' + suffix
+        suffix = suffix.lower()
     
     sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
 
@@ -182,30 +200,43 @@ def process_csv(prefix_list=['hd'], copy_to_database=True):
         sql_engine.execute("drop view if exists " + prefix + ";")
         create_view_statement = "CREATE OR REPLACE VIEW public." + prefix + " AS "
         common_column_statement = ""
-        for file_path in sorted(glob.glob("./csv/{0}*.csv".format(prefix)), reverse=True):
+        
+        for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
             # IPEDS seems to use a western encoding instead of UTF-8
             csv = pandas.read_csv(file_path, encoding="windows-1252")
-            # Convert column names to lowercase
+            # convert column names to lowercase
             for column in csv.columns:
                 csv.rename(columns={column:column.strip("\"").lower()}, inplace=True)
+            # utility: parses file_path
             file_name = os.path.basename(file_path)
+            # utility: get only file_name i.e. HD2016.zip > HD2016
             file_name_no_ext, extension = os.path.splitext(file_name)
+            # logging
             print("Processing " + file_name_no_ext)
+            # strip out prefix, leaving only year i.e. HD2016 > 2016
             year = file_name_no_ext.lower().strip(prefix.lower())
+            # add a year column
             csv["year"] = int(year)
+            # logging?
             csv.to_csv("last_processed.csv")
+            # this if contains the SQL statements to create tables and import data
             if copy_to_database:
+                # this create tables and import data into the database
                 csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
+                # these makes the unified view of all IPEDS data in our database
                 common_column_statement += "select column_name, data_type from information_schema.columns" \
                                            " where table_name = '{}' intersect ".format(file_name_no_ext)
+                # {{0}} so that {0} survives
                 create_view_statement += "select {{0}} from {} union ".format(file_name_no_ext)
 
+        # cleanup, cuts off one comma 
         common_column_statement = common_column_statement[:-len("intersect")-1]
         create_view_statement = create_view_statement[:-len("union")-1]
-
+        # create a string of all column names 
         common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
+        # part of the code that executes the SQL to make the unified view
+        # {0} from earlier gets formatted here
         sql_engine.execute(create_view_statement.format(common_column_names))
-
 
 def main():
     """ main subroutine """
@@ -224,6 +255,11 @@ def main():
                         '--prefix',
                         help='define the prefix of the files wanted, \
                         default is "HD" (for getting HDxxxx.zip files for example)')
+    parser.add_argument('-pp',
+                        '--suffix',
+                        help='define the suffix of the files wanted, \
+                        default is "" (nothing) \
+                        (but ex. HDxxxx_AY.zip would be retrieved if given default prefix and \'AY\' suffix)')
     year_group.add_argument('-y',
                         '--year',
                         help='input one number indicating the year you want \
@@ -273,6 +309,10 @@ def main():
         args.prefix = 'HD'
     print('Prefix Used: {}'.format(args.prefix))
 
+    if args.suffix is None:
+        args.suffix = ''
+    print('Suffix Used: {}'.format(args.suffix))
+
     if args.check:
         print('Checking {}{} File'.format(args.prefix, args.check))
         single_download(args.check, prefix='HD', check=True)
@@ -296,7 +336,7 @@ def main():
 
     if args.downloadAll:
         print('Downloading All {} Files...'.format(args.prefix))
-        downloader(prefix=args.prefix)
+        downloader(prefix=args.prefix, suffix=args.suffix)
         process_csv()
         print('...Download Complete')
     if args.proc:
