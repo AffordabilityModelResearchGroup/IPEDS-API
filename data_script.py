@@ -101,26 +101,27 @@ def unzip_delete(zip_filename):
     shutil.rmtree('./csv/{}'.format(zip_filename))
 
 
-def single_download(year, check=False, prefix='HD', url='data/', file_ex='.zip'):
+def single_check(year, prefix, url='data/', file_ex='.zip'):
+    # checks if file exists
+    res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
+                    .format(url, prefix, year, file_ex))
+    print('{}{}{} {}'.format(prefix, year, file_ex, str(res)))
+
+
+def single_download(year, prefix, url='data/', file_ex='.zip'):
     """ downloads a single year's .zip data file """
-    if check is True:
-        # checks if file exists
-        res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
-                        .format(url, prefix, year, file_ex))
-        print('{}{}{} {}'.format(prefix, year, file_ex, str(res)))
+    res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
+                    .format(url, prefix, year, file_ex))
+    if res.status_code == 200:
+        with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
+            out_file.write(res.content)
+        unzip_delete('{}{}'.format(prefix, year))
+        return 0
     else:
-        res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
-                        .format(url, prefix, year, file_ex))
-        if res.status_code == 200:
-            with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
-                out_file.write(res.content)
-            unzip_delete('{}{}'.format(prefix, year))
-            return 0
-        else:
-            return -1
+        return -1
 
 
-def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zip'): 
+def series_download(year_begin, year_end, prefix, url='data/', file_ex='.zip'): 
     """ downloads all .zip data files from the year_begin to year_end """
     if (year_begin > year_end):
         tmp = year_begin
@@ -133,36 +134,35 @@ def series_download(year_begin, year_end, prefix='HD', url='data/', file_ex='.zi
         print('...Download {}{} File Complete'.format(prefix, year))
 
 
-def downloader(prefix='HD', suffix='', check_all=False):
-    """ parses file (download_links.txt) generates by g_dlinks()
-    and downloads (or checks) .zip files """
-    # download wanted files
+def checker():
     with open('./cache/download_links.txt') as in_file:
         for line in in_file:
             line = str(line)
             line = line.strip()
-            filename = os.path.split(line)[1]
-            suffix_start_index = filename.find(suffix, filename.find('_'), filename.find('.zip'))
+            # checks if any file exists
+            res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
+            print(line + ' ' + str(res))
 
-            if check_all is True:
-                # checks if any file exists
-                res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
-                print(line + ' ' + str(res))
-            elif (
-                    ((not filename.startswith(prefix)) and suffix != '') or 
-                    ("_" in filename and suffix == '') or 
-                    not (filename[ suffix_start_index : filename.find('.zip') ] == suffix and suffix != '')
-                ):
-                # skip the current line if not the prefix or suffix we want
-                # print(((not filename.startswith(prefix)) and suffix != ''))
-                # print(("_" in filename and suffix == ''))
-                # print(not (filename[ suffix_start_index : filename.find('.zip') ] == suffix and suffix != ''))
-                # print(filename)
-                # print(filename[ suffix_start_index : filename.find('.zip') ])
-                # assert suffix_start_index == -1, "\nIncorrectly Filtered Out: \n{}\n {}\n {}\n".format(line, filename, suffix)
-                # print
-                continue
-            else:
+
+def downloader(prefix, suffix, check_all=False):
+    """ parses file (download_links.txt) generates by g_dlinks()
+    and downloads (or checks) .zip files """
+
+    # we need to pad suffix with '_' to match file names
+    # i.e. file is name ic2000_ay.csv so pad a suffix, 'AY', with '_'
+    if (suffix != ''):
+        suffix = '_' + suffix
+        # make sure its uppercase when refering to zip
+        suffix = suffix.upper()
+
+    # regex expression to match files we want
+    match = re.compile('{0}[0-9]{{4,4}}{1}.zip'.format(prefix.upper(), suffix.upper()))
+
+    with open('./cache/download_links.txt') as in_file:
+        for line in in_file:
+            line = str(line).strip()
+            filename = os.path.split(line)[1]
+            if match.search(filename):
                 # download file
                 res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 if res.status_code == 200:
@@ -177,14 +177,7 @@ def downloader(prefix='HD', suffix='', check_all=False):
                     continue
 
 
-def process_csv(prefix_list=['hd', 'ic'], suffix='ay', copy_to_database=True):
-
-    # we need to pad suffix with '_' to match file names
-    # i.e. file is name ic2000_ay.csv so pad a suffix, 'AY', with '_'
-    if (suffix != ''):
-        suffix = '_' + suffix
-        suffix = suffix.lower()
-    
+def process_csv(prefix, suffix, copy_to_database=True):
     sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
 
     # # drop the existing table
@@ -196,47 +189,54 @@ def process_csv(prefix_list=['hd', 'ic'], suffix='ay', copy_to_database=True):
     #     pass
 
     # Process each csv file
-    for prefix in prefix_list:
-        sql_engine.execute("drop view if exists " + prefix + ";")
-        create_view_statement = "CREATE OR REPLACE VIEW public." + prefix + " AS "
-        common_column_statement = ""
-        
-        for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
-            # IPEDS seems to use a western encoding instead of UTF-8
-            csv = pandas.read_csv(file_path, encoding="windows-1252")
-            # convert column names to lowercase
-            for column in csv.columns:
-                csv.rename(columns={column:column.strip("\"").lower()}, inplace=True)
-            # utility: parses file_path
-            file_name = os.path.basename(file_path)
-            # utility: get only file_name i.e. HD2016.zip > HD2016
-            file_name_no_ext, extension = os.path.splitext(file_name)
-            # logging
-            print("Processing " + file_name_no_ext)
-            # strip out prefix, leaving only year i.e. HD2016 > 2016
-            year = file_name_no_ext.lower().strip(prefix.lower())
-            # add a year column
-            csv["year"] = int(year)
-            # logging?
-            csv.to_csv("last_processed.csv")
-            # this if contains the SQL statements to create tables and import data
-            if copy_to_database:
-                # this create tables and import data into the database
-                csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
-                # these makes the unified view of all IPEDS data in our database
-                common_column_statement += "select column_name, data_type from information_schema.columns" \
-                                           " where table_name = '{}' intersect ".format(file_name_no_ext)
-                # {{0}} so that {0} survives
-                create_view_statement += "select {{0}} from {} union ".format(file_name_no_ext)
+    sql_engine.execute("drop view if exists " + prefix + ";")
+    create_view_statement = "CREATE OR REPLACE VIEW public." + prefix + " AS "
+    common_column_statement = ""
 
-        # cleanup, cuts off one comma 
-        common_column_statement = common_column_statement[:-len("intersect")-1]
-        create_view_statement = create_view_statement[:-len("union")-1]
-        # create a string of all column names 
-        common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
-        # part of the code that executes the SQL to make the unified view
-        # {0} from earlier gets formatted here
-        sql_engine.execute(create_view_statement.format(common_column_names))
+    # we need to pad suffix with '_' to match file names
+    # i.e. file is name ic2000_ay.csv so pad a suffix, 'AY', with '_'
+    if (suffix != ''):
+        suffix = '_' + suffix
+        # make sure its lowercase when refering to csv
+        suffix = suffix.lower()
+
+    for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
+        # IPEDS seems to use a western encoding instead of UTF-8
+        csv = pandas.read_csv(file_path, encoding="windows-1252")
+        # convert column names to lowercase
+        for column in csv.columns:
+            csv.rename(columns={column:column.strip("\"").lower()}, inplace=True)
+        # utility: parses file_path i.e. ./csv/hd2016.csv > hd2016.csv
+        file_name = os.path.basename(file_path)
+        # utility: get only file_name i.e. hd2016.csv > hd2016
+        file_name_no_ext, extension = os.path.splitext(file_name)
+        # logging
+        print("...Processing " + file_name_no_ext)
+        # strip out prefix, leaving only year i.e. hd2016 > 2016
+        # year = file_name_no_ext.lower().strip(prefix.lower())
+        year = file_name_no_ext.lower().strip(prefix.lower()).strip(suffix.lower()).strip('_').strip('_rv')
+        # add a year column
+        csv["year"] = int(year)
+        # logging?
+        csv.to_csv("last_processed.csv", encoding='utf-8')
+        # this if contains the SQL statements to create tables and import data
+        if copy_to_database:
+            # this create tables and import data into the database
+            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
+            # these makes the unified view of all IPEDS data in our database
+            common_column_statement += "select column_name, data_type from information_schema.columns" \
+                                        " where table_name = '{}' intersect ".format(file_name_no_ext)
+            # {{0}} so that {0} survives
+            create_view_statement += "select {{0}} from {} union ".format(file_name_no_ext)
+
+    # cleanup, cuts off one comma 
+    common_column_statement = common_column_statement[:-len("intersect")-1]
+    create_view_statement = create_view_statement[:-len("union")-1]
+    # create a string of all column names 
+    common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
+    # part of the code that executes the SQL to make the unified view
+    # {0} from earlier gets formatted here
+    sql_engine.execute(create_view_statement.format(common_column_names))
 
 def main():
     """ main subroutine """
@@ -272,8 +272,8 @@ def main():
                         and downloads them with specified prefix')
     parser.add_argument('-c',
                         '--check',
-                        help='checks to see if the files \
-                        (with the given prefix - default is HD - and year) exist')
+                        help='checks to see if the file with the given year \
+                        (and given prefix, default is HD unless defined with -p) exist')
     parser.add_argument('-a',
                         '--checkAll',
                         help='checks to see if any files exist \
@@ -294,7 +294,7 @@ def main():
     print('')
     if args.checkAll:
         print('Checking All Files...')
-        downloader(check_all=True)
+        checker()
         return
 
     if args.fresh:
@@ -315,14 +315,15 @@ def main():
 
     if args.check:
         print('Checking {}{} File'.format(args.prefix, args.check))
-        single_download(args.check, prefix='HD', check=True)
+        # single_download(args.check, prefix='HD', check=True)
+        single_check(args.check, prefix='HD')
         return
     
     if args.year:
         print('Year: {}'.format(args.year))
         print('Downloading {}{} File'.format(args.prefix, args.year))
         if single_download(args.year, prefix=args.prefix) == 0:
-            process_csv()
+            # process_csv()
             print('...Download Complete')
         else:
             print('...File Does Not Exist')
@@ -330,17 +331,20 @@ def main():
     
     if args.series:
         print('Years: {} - {}'.format(args.series[0], args.series[1]))
-        series_download(int(args.series[0]), int(args.series[1]))
-        process_csv()
+        series_download(int(args.series[0]), int(args.series[1]), prefix=args.prefix)
+        # process_csv()
         return
 
     if args.downloadAll:
         print('Downloading All {} Files...'.format(args.prefix))
         downloader(prefix=args.prefix, suffix=args.suffix)
-        process_csv()
+        process_csv(prefix=args.prefix, suffix=args.suffix)
         print('...Download Complete')
+
     if args.proc:
-        process_csv()
+        print('csv Processing...')
+        process_csv(args.prefix, args.suffix)
+        print('...csv Processing Complete')
 
 
 if __name__ == '__main__':
