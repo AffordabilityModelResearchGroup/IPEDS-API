@@ -144,7 +144,7 @@ def checker():
             print(line + ' ' + str(res))
 
 
-def downloader(prefix, suffix, check_all=False):
+def downloader(prefix, suffix, year_list=list(map(str, range(2007, 2016))), check_all=False ):
     """ parses file (download_links.txt) generates by g_dlinks()
     and downloads (or checks) .zip files """
 
@@ -156,13 +156,14 @@ def downloader(prefix, suffix, check_all=False):
         suffix = suffix.upper()
 
     # regex expression to match files we want
-    match = re.compile('{0}[0-9]{{4,4}}{1}.zip'.format(prefix.upper(), suffix.upper()))
+    match = re.compile('{0}\d{{4,4}}{1}.zip'.format(prefix.upper(), suffix.upper()))
+    year_matcher = re.compile("\d{4,4}")
 
     with open('./cache/download_links.txt') as in_file:
         for line in in_file:
             line = str(line).strip()
             filename = os.path.split(line)[1]
-            if match.search(filename):
+            if match.search(filename) and year_matcher.search(filename).group() in year_list:
                 # download file
                 res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 if res.status_code == 200:
