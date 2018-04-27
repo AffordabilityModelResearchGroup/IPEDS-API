@@ -210,6 +210,7 @@ def process_csv(prefix, suffix, copy_to_database=True):
         file_name = os.path.basename(file_path)
         # utility: get only file_name i.e. hd2016.csv > hd2016
         file_name_no_ext, extension = os.path.splitext(file_name)
+        file_name_no_ext = file_name_no_ext.lower()
         # logging
         print("...Processing " + file_name_no_ext)
         # strip out prefix, leaving only year i.e. hd2016 > 2016
