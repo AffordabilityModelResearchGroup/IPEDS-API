@@ -100,38 +100,38 @@ def unzip_delete(zip_filename):
     # delete (now) empty folder
     shutil.rmtree('./csv/{}'.format(zip_filename))
 
+# TODO: update to include suffix
+# def single_check(year, prefix, url='data/', file_ex='.zip'):
+#     # checks if file exists
+#     res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
+#                     .format(url, prefix, year, file_ex))
+#     print('{}{}{} {}'.format(prefix, year, file_ex, str(res)))
 
-def single_check(year, prefix, url='data/', file_ex='.zip'):
-    # checks if file exists
-    res = requests.head('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
-                    .format(url, prefix, year, file_ex))
-    print('{}{}{} {}'.format(prefix, year, file_ex, str(res)))
+# TODO: update to include suffix
+# def single_download(year, prefix, url='data/', file_ex='.zip'):
+#     """ downloads a single year's .zip data file """
+#     res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
+#                     .format(url, prefix, year, file_ex))
+#     if res.status_code == 200:
+#         with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
+#             out_file.write(res.content)
+#         unzip_delete('{}{}'.format(prefix, year))
+#         return 0
+#     else:
+#         return -1
 
+# TODO: update to include suffix
+# def series_download(year_begin, year_end, prefix, url='data/', file_ex='.zip'): 
+#     """ downloads all .zip data files from the year_begin to year_end """
+#     if (year_begin > year_end):
+#         tmp = year_begin
+#         year_begin = year_end
+#         year_end = tmp
 
-def single_download(year, prefix, url='data/', file_ex='.zip'):
-    """ downloads a single year's .zip data file """
-    res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}{}{}{}'
-                    .format(url, prefix, year, file_ex))
-    if res.status_code == 200:
-        with open('./data/{}{}.zip'.format(prefix, year), 'wb') as out_file:
-            out_file.write(res.content)
-        unzip_delete('{}{}'.format(prefix, year))
-        return 0
-    else:
-        return -1
-
-
-def series_download(year_begin, year_end, prefix, url='data/', file_ex='.zip'): 
-    """ downloads all .zip data files from the year_begin to year_end """
-    if (year_begin > year_end):
-        tmp = year_begin
-        year_begin = year_end
-        year_end = tmp
-
-    for year in range(year_begin, year_end + 1):
-        print('Downloading {}{} File'.format(prefix, year))
-        single_download(year, prefix='HD', url='data/', file_ex='.zip')
-        print('...Download {}{} File Complete'.format(prefix, year))
+#     for year in range(year_begin, year_end + 1):
+#         print('Downloading {}{} File'.format(prefix, year))
+#         single_download(year, prefix='HD', url='data/', file_ex='.zip')
+#         print('...Download {}{} File Complete'.format(prefix, year))
 
 
 def checker():
@@ -144,7 +144,7 @@ def checker():
             print(line + ' ' + str(res))
 
 
-def downloader(prefix, suffix, year_list=list(map(str, range(2007, 2016))), check_all=False ):
+def downloader(prefix, suffix, year_begin, check_all=False ):
     """ parses file (download_links.txt) generates by g_dlinks()
     and downloads (or checks) .zip files """
 
@@ -163,7 +163,11 @@ def downloader(prefix, suffix, year_list=list(map(str, range(2007, 2016))), chec
         for line in in_file:
             line = str(line).strip()
             filename = os.path.split(line)[1]
-            if match.search(filename) and year_matcher.search(filename).group() in year_list:
+            if match.search(filename) and \
+                (
+                    int(year_matcher.search(filename).group()) >= 2007 or 
+                    int(year_matcher.search(filename).group()[2:]) >= 7
+                ):
                 # download file
                 res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 if res.status_code == 200:
@@ -227,11 +231,11 @@ def process_csv(prefix, suffix, copy_to_database=True):
             csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
             # these makes the unified view of all IPEDS data in our database
             common_column_statement += "select column_name, data_type from information_schema.columns" \
-                                        " where table_name = '{}' intersect ".format(file_name_no_ext)
+                                        " where table_name = '{}' intersect ".format(file_name_no_ext.strip())
             # {{0}} so that {0} survives
             create_view_statement += "select {{0}} from {} union ".format(file_name_no_ext)
 
-    # cleanup, cuts off one comma 
+    # cleanup, cuts off one comma
     common_column_statement = common_column_statement[:-len("intersect")-1]
     create_view_statement = create_view_statement[:-len("union")-1]
     # create a string of all column names 
@@ -261,23 +265,28 @@ def main():
                         '--suffix',
                         help='define the suffix of the files wanted, \
                         default is "" (nothing) \
-                        (but ex. HDxxxx_AY.zip would be retrieved if given default prefix and \'AY\' suffix)')
-    year_group.add_argument('-y',
+                        (ex. HDxxxx_AY.zip would be retrieved if given default prefix and \'AY\' suffix)')
+    parser.add_argument('-y',
                         '--year',
-                        help='input one number indicating the year you want \
-                        and downloads it with specified prefix')
-    year_group.add_argument('-s',
-                        '--series',
-                        nargs=2,
-                        help='input two numbers indicating series of years you want \
-                        (from year of first number to year of second number) \
-                        and downloads them with specified prefix')
-    parser.add_argument('-c',
-                        '--check',
-                        help='checks to see if the file with the given year \
-                        (and given prefix, default is HD unless defined with -p) exist')
-    parser.add_argument('-a',
-                        '--checkAll',
+                        help='define the year to limit files to ones after the specified year, \
+                        default is "2007" \
+                        (ex. HD2007.zip and HD2008.zip would be retrieved, HD2006.zip would not)')
+    # TODO: -y option stolen by another function, rename option
+    # year_group.add_argument('-y',
+    #                     '--year',
+    #                     help='input one number indicating the year you want \
+    #                     and downloads it with specified prefix')
+    # year_group.add_argument('-s',
+    #                     '--series',
+    #                     nargs=2,
+    #                     help='input two numbers indicating series of years you want \
+    #                     (from year of first number to year of second number) \
+    #                     and downloads them with specified prefix')
+    # parser.add_argument('-c',
+    #                     '--check',
+    #                     help='checks to see if the file with the given year \
+    #                     (and given prefix, default is HD unless defined with -p) exist')
+    parser.add_argument('--checkAll',
                         help='checks to see if any files exist \
                         (note that checkAll overrides all other options), \
                         <Response 200> indicates that it does \
@@ -288,6 +297,9 @@ def main():
                         help='downloads all files with specified prefix',
                         action='store_true')
     parser.add_argument('--proc',
+                        help='imports data into our postgres database \
+                        (this also runs after all downloading functions; \
+                        its main purpose is for reruning processing when/if it fails',
                         action='store_true')
 
     # read arguments from the command line
@@ -315,31 +327,38 @@ def main():
         args.suffix = ''
     print('Suffix Used: {}'.format(args.suffix))
 
-    if args.check:
-        print('Checking {}{} File'.format(args.prefix, args.check))
-        # single_download(args.check, prefix='HD', check=True)
-        single_check(args.check, prefix='HD')
-        return
+    if args.year is None:
+        args.year = '2007'
+    print('Restricting Files to Years On and After: {}'.format(args.year))
+
+    # TODO: update to include suffix
+    # if args.check:
+    #     print('Checking {}{} File'.format(args.prefix, args.check))
+    #     # single_download(args.check, prefix='HD', check=True)
+    #     single_check(args.check, prefix='HD')
+    #     return
     
-    if args.year:
-        print('Year: {}'.format(args.year))
-        print('Downloading {}{} File'.format(args.prefix, args.year))
-        if single_download(args.year, prefix=args.prefix) == 0:
-            # process_csv()
-            print('...Download Complete')
-        else:
-            print('...File Does Not Exist')
-        return
+    # TODO: update to include suffix
+    # if args.year:
+    #     print('Year: {}'.format(args.year))
+    #     print('Downloading {}{} File'.format(args.prefix, args.year))
+    #     if single_download(args.year, prefix=args.prefix) == 0:
+    #         # process_csv()
+    #         print('...Download Complete')
+    #     else:
+    #         print('...File Does Not Exist')
+    #     return
     
-    if args.series:
-        print('Years: {} - {}'.format(args.series[0], args.series[1]))
-        series_download(int(args.series[0]), int(args.series[1]), prefix=args.prefix)
-        # process_csv()
-        return
+    # TODO: update to include suffix
+    # if args.series:
+    #     print('Years: {} - {}'.format(args.series[0], args.series[1]))
+    #     series_download(int(args.series[0]), int(args.series[1]), prefix=args.prefix)
+    #     # process_csv()
+    #     return
 
     if args.downloadAll:
         print('Downloading All {} Files...'.format(args.prefix))
-        downloader(prefix=args.prefix, suffix=args.suffix)
+        downloader(prefix=args.prefix, suffix=args.suffix, year_begin=args.year)
         process_csv(prefix=args.prefix, suffix=args.suffix)
         print('...Download Complete')
 
