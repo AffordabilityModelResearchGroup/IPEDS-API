@@ -183,6 +183,7 @@ def downloader(prefix, suffix, year_begin, check_all=False ):
 
 
 def process_csv(prefix, suffix, copy_to_database=True):
+    prefix = prefix.lower()
     sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
 
     # # drop the existing table
