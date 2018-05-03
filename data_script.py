@@ -194,17 +194,18 @@ def process_csv(prefix, suffix, copy_to_database=True):
     # except NoSuchTableError:
     #     pass
 
-    # Process each csv file
-    sql_engine.execute("drop view if exists " + prefix + ";")
-    create_view_statement = "CREATE OR REPLACE VIEW public." + prefix + " AS "
-    common_column_statement = ""
-
     # we need to pad suffix with '_' to match file names
     # i.e. file is name ic2000_ay.csv so pad a suffix, 'AY', with '_'
     if (suffix != ''):
         suffix = '_' + suffix
         # make sure its lowercase when refering to csv
         suffix = suffix.lower()
+
+    # Process each csv file
+    view_name = prefix + suffix
+    sql_engine.execute("drop view if exists " + view_name + ";")
+    create_view_statement = "CREATE OR REPLACE VIEW public." + view_name + " AS "
+    common_column_statement = ""
 
     for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
         # IPEDS seems to use a western encoding instead of UTF-8
@@ -226,6 +227,7 @@ def process_csv(prefix, suffix, copy_to_database=True):
         csv["year"] = int(year)
         # logging?
         csv.to_csv("last_processed.csv", encoding='utf-8')
+
         # this if contains the SQL statements to create tables and import data
         if copy_to_database:
             # this create tables and import data into the database
