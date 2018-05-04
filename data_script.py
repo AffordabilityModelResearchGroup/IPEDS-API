@@ -12,7 +12,8 @@ import pandas
 from bs4 import BeautifulSoup
 
 from selenium import webdriver
-from sqlalchemy import create_engine, Table, MetaData
+from sqlalchemy import create_engine
+from sqlalchemy.types import String, BigInteger
 from sqlalchemy.exc import NoSuchTableError
 from selenium.webdriver.firefox.options import Options
 # from selenium.webdriver.common.keys import Keys
@@ -208,11 +209,13 @@ def process_csv(prefix, suffix, copy_to_database=True):
     common_column_statement = ""
 
     for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
+        if not re.compile("./csv/{}\d{{4,4}}{}.csv".format(prefix, suffix)).match(file_path):
+            continue
         # IPEDS seems to use a western encoding instead of UTF-8
         csv = pandas.read_csv(file_path, encoding="windows-1252")
         # convert column names to lowercase
         for column in csv.columns:
-            csv.rename(columns={column:column.strip("\"").lower()}, inplace=True)
+            csv.rename(columns={column:column.strip("\"").strip().lower()}, inplace=True)
         # utility: parses file_path i.e. ./csv/hd2016.csv > hd2016.csv
         file_name = os.path.basename(file_path)
         # utility: get only file_name i.e. hd2016.csv > hd2016
@@ -231,7 +234,7 @@ def process_csv(prefix, suffix, copy_to_database=True):
         # this if contains the SQL statements to create tables and import data
         if copy_to_database:
             # this create tables and import data into the database
-            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
+            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False, dtype={"unitid": BigInteger})
             # these makes the unified view of all IPEDS data in our database
             common_column_statement += "select column_name, data_type from information_schema.columns" \
                                         " where table_name = '{}' intersect ".format(file_name_no_ext.strip())
