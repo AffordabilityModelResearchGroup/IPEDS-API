@@ -6,6 +6,7 @@ import glob
 import re
 import requests
 import os
+from itertools import compress
 import errno
 import pandas
 
@@ -84,18 +85,26 @@ def get_dlinks(ipeds_data_file='./cache/ipeds_data.html', dlinks_file='./cache/d
 
 def unzip_delete(zip_filename):
     """ unzips zip files and deletes zip file, take in filename without file extension """
-    # unzip zip files
+    # unzip zip files and places it in the csv folder
     with zipfile.ZipFile('./data/{}'.format(zip_filename), "r") as zip_ref:
         zip_ref.extractall('./csv/{}'.format(zip_filename))
     
     # zipfile unzips files but keeps the directory structure
-    # i.e. file.zip becomse file.zip > fileCSV.csv
+    # i.e. file.zip becomse file.zip > (inside) fileCSV.csv
     # these next two pieces of code:
     
     # move csv file out of folder
-    for unzipped_file in glob.glob('./csv/{}/*'.format(zip_filename)):
-        filename = os.path.split(unzipped_file)[1]
-        shutil.move(unzipped_file, os.path.join('./csv/', filename))
+    # return a list of files inside the recently unzipped folder 
+    csv_files = [unzipped_file for unzipped_file in glob.glob('./csv/{}/*'.format(zip_filename))]
+    # this is important because in some cases, you may also recieve a '_rv' file
+    # same file, but '_rv' indicates its revised and hence the most recent one
+    # this returns a list or booleans indicating which of the elements contains '_rv'
+    filter_me = list(map(lambda x: True if ('rv' in x) else False, csv_files))
+    if True in filter_me:
+        # if one is found, filter that out by combining the list of booleans with the original list of files
+        # false are filtered out
+        csv_files = list(compress(csv_files, filter_me))
+    shutil.move(csv_files[0], os.path.join('./csv/', os.path.split(csv_files[0])[1].replace('_rv', '')))
     
     # delete (now) empty folder
     shutil.rmtree('./csv/{}'.format(zip_filename))
@@ -121,7 +130,7 @@ def unzip_delete(zip_filename):
 #         return -1
 
 # TODO: update to include suffix
-# def series_download(year_begin, year_end, prefix, url='data/', file_ex='.zip'): 
+# def series_download(year_begin, year_end, prefix, url='data/', file_ex='.zip'):
 #     """ downloads all .zip data files from the year_begin to year_end """
 #     if (year_begin > year_end):
 #         tmp = year_begin
@@ -165,14 +174,13 @@ def downloader(prefix, suffix, year_begin, check_all=False ):
             filename = os.path.split(line)[1]
             if match.search(filename) and \
                 (
-                    int(year_matcher.search(filename).group()) >= 2007 or 
-                    int(year_matcher.search(filename).group()[2:]) >= 7
+                    int(year_matcher.search(filename).group()) >= 2007 or
+                    (int(year_matcher.search(filename).group()[2:]) >= 7 and (prefix == 'f' and suffix == 'f1a'))
                 ):
                 # download file
                 res = requests.get('https://nces.ed.gov/ipeds/datacenter/{}'.format(line))
                 if res.status_code == 200:
-                    with open('./data/{}'.format(filename),
-                              'wb') as out_file:
+                    with open('./data/{}'.format(filename),'wb') as out_file:
                         out_file.write(res.content)
                     print('...Download {} Complete'.format(filename))
                     unzip_delete('{}'.format(filename))
@@ -207,6 +215,7 @@ def process_csv(prefix, suffix, copy_to_database=True):
     create_view_statement = "CREATE OR REPLACE VIEW public." + view_name + " AS "
     common_column_statement = ""
 
+    # TODO: ignore files that have a _rv equivalent
     for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
         # IPEDS seems to use a western encoding instead of UTF-8
         csv = pandas.read_csv(file_path, encoding="windows-1252")
@@ -235,13 +244,13 @@ def process_csv(prefix, suffix, copy_to_database=True):
             # these makes the unified view of all IPEDS data in our database
             common_column_statement += "select column_name, data_type from information_schema.columns" \
                                         " where table_name = '{}' intersect ".format(file_name_no_ext.strip())
-            # {{0}} so that {0} survives
+            # {{0}} so that {0} survives the format operation
             create_view_statement += "select {{0}} from {} union ".format(file_name_no_ext)
 
     # cleanup, cuts off one comma
     common_column_statement = common_column_statement[:-len("intersect")-1]
     create_view_statement = create_view_statement[:-len("union")-1]
-    # create a string of all column names 
+    # create a string of all column names
     common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
     # part of the code that executes the SQL to make the unified view
     # {0} from earlier gets formatted here
