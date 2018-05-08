@@ -218,8 +218,9 @@ def process_csv(prefix, suffix, copy_to_database=True):
 
     # TODO: ignore files that have a _rv equivalent
     for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
-        if not re.compile("./csv/{}\d{{4,4}}{}.csv".format(prefix, suffix)).match(file_path):
-            continue
+        # TODO: this filtering does not work
+        # if not re.compile("./csv/{}\d{{4,4}}{}.csv".format(prefix, suffix)).match(file_path):
+        #     continue
         # IPEDS seems to use a western encoding instead of UTF-8
         csv = pandas.read_csv(file_path, encoding="windows-1252")
         # convert column names to lowercase
@@ -243,7 +244,8 @@ def process_csv(prefix, suffix, copy_to_database=True):
         # this if contains the SQL statements to create tables and import data
         if copy_to_database:
             # this create tables and import data into the database
-            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False, dtype={"unitid": BigInteger})
+            # csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False, dtype={"unitid": BigInteger})
+            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
             # these makes the unified view of all IPEDS data in our database
             common_column_statement += "select column_name, data_type from information_schema.columns" \
                                         " where table_name = '{}' intersect ".format(file_name_no_ext.strip())
