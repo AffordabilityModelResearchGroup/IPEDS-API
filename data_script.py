@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from selenium import webdriver
 from sqlalchemy import create_engine
-from sqlalchemy.types import String, BigInteger
+from sqlalchemy.types import TEXT, BigInteger
 from sqlalchemy.exc import NoSuchTableError
 from selenium.webdriver.firefox.options import Options
 # from selenium.webdriver.common.keys import Keys
@@ -191,17 +191,9 @@ def downloader(prefix, suffix, year_begin, check_all=False ):
                     continue
 
 
-def process_csv(prefix, suffix, copy_to_database=True):
+def process_csv(prefix, suffix, common_column_dict=None, copy_to_database=True):
     prefix = prefix.lower()
     sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
-
-    # # drop the existing table
-    # meta = MetaData(sql_engine)
-    # try:
-    #     ipeds_table = Table('IPEDS', meta, autoload=True)
-    #     ipeds_table.drop(sql_engine)
-    # except NoSuchTableError:
-    #     pass
 
     # we need to pad suffix with '_' to match file names
     # i.e. file is name ic2000_ay.csv so pad a suffix, 'AY', with '_'
@@ -210,42 +202,45 @@ def process_csv(prefix, suffix, copy_to_database=True):
         # make sure its lowercase when refering to csv
         suffix = suffix.lower()
 
-    # Process each csv file
     view_name = prefix + suffix
     sql_engine.execute("drop view if exists " + view_name + ";")
     create_view_statement = "CREATE OR REPLACE VIEW public." + view_name + " AS "
     common_column_statement = ""
 
-    # TODO: ignore files that have a _rv equivalent
     for file_path in sorted(glob.glob("./csv/{}*{}.csv".format(prefix, suffix)), reverse=True):
-        # TODO: this filtering does not work
-        # if not re.compile("./csv/{}\d{{4,4}}{}.csv".format(prefix, suffix)).match(file_path):
-        #     continue
         # IPEDS seems to use a western encoding instead of UTF-8
         csv = pandas.read_csv(file_path, encoding="windows-1252")
+
         # convert column names to lowercase
         for column in csv.columns:
             csv.rename(columns={column:column.strip("\"").strip().lower()}, inplace=True)
+
         # utility: parses file_path i.e. ./csv/hd2016.csv > hd2016.csv
         file_name = os.path.basename(file_path)
+
         # utility: get only file_name i.e. hd2016.csv > hd2016
         file_name_no_ext, extension = os.path.splitext(file_name)
         file_name_no_ext = file_name_no_ext.lower()
+
         # logging
         print("...Processing " + file_name_no_ext)
+
         # strip out prefix, leaving only year i.e. hd2016 > 2016
         # year = file_name_no_ext.lower().strip(prefix.lower())
         year = file_name_no_ext.lower().strip(prefix.lower()).strip(suffix.lower()).strip('_').strip('_rv')
+
         # add a year column
         csv["year"] = int(year)
-        # logging?
+
+        # logging
         csv.to_csv("last_processed.csv", encoding='utf-8')
+
 
         # this if contains the SQL statements to create tables and import data
         if copy_to_database:
             # this create tables and import data into the database
-            # csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False, dtype={"unitid": BigInteger})
-            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False)
+            csv.to_sql(name=file_name_no_ext, con=sql_engine, if_exists="replace", index=False,
+                       dtype={col: TEXT for col in csv})
             # these makes the unified view of all IPEDS data in our database
             common_column_statement += "select column_name, data_type from information_schema.columns" \
                                         " where table_name = '{}' intersect ".format(file_name_no_ext.strip())
@@ -256,7 +251,11 @@ def process_csv(prefix, suffix, copy_to_database=True):
     common_column_statement = common_column_statement[:-len("intersect")-1]
     create_view_statement = create_view_statement[:-len("union")-1]
     # create a string of all column names
-    common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
+    if common_column_dict:
+        common_column_names = ", ".join(
+            [(column_name + " as " + code_name) for column_name, code_name in common_column_dict ])
+    else:
+        common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
     # part of the code that executes the SQL to make the unified view
     # {0} from earlier gets formatted here
     sql_engine.execute(create_view_statement.format(common_column_names))

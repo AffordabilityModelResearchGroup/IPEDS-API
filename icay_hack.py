@@ -22,7 +22,7 @@ def process_csv(prefix, suffix):
                         outfile.write(line)
                         continue
                     else:
-                        outfile.write('\"id:{}\"{}'.format(line[:line.find(',')], line[line.find(','):]))
+                        outfile.write('id:{}{}'.format(line[:line.find(',')], line[line.find(','):]))
 
 def main():
     process_csv('ic', 'ay')
