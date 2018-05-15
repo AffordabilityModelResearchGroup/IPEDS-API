@@ -217,8 +217,7 @@ def get_year(file_name_no_ext, prefix, suffix):
     return year
 
 
-
-def process_csv(prefix, suffix, common_column_dict=None, copy_to_database=True):
+def process_csv(prefix, suffix, view_column_names=None, copy_to_database=True):
     prefix = prefix.lower()
     sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
 
@@ -276,9 +275,9 @@ def process_csv(prefix, suffix, common_column_dict=None, copy_to_database=True):
     common_column_statement = common_column_statement[:-len("intersect")-1]
     create_view_statement = create_view_statement[:-len("union")-1]
     # create a string of all column names
-    if common_column_dict:
+    if view_column_names:
         common_column_names = ", ".join(
-            [(column_name + " as " + code_name) for column_name, code_name in common_column_dict ])
+            [(column_name + " as " + code_name) for column_name, code_name in view_column_names])
     else:
         common_column_names = ", ".join([i[0] for i in list(sql_engine.execute(common_column_statement))])
     # part of the code that executes the SQL to make the unified view
@@ -404,7 +403,21 @@ def main():
 
     if args.proc:
         print('csv Processing...')
-        process_csv(args.prefix, args.suffix)
+        try:
+            config = {}
+            column_filename = args.prefix
+            if args.suffix:
+                column_filename = column_filename + '_' + args.suffix
+            with open("./view_column_names/" + column_filename + '.py') as f:
+                exec (f.read(), config)
+        except:
+            print("No view column file found")
+        if "column_list" in config:
+            column_list = config["column_list"]
+        else:
+            column_list = None
+            print("File did not contain column_list")
+        process_csv(args.prefix, args.suffix, view_column_names=column_list)
         print('...csv Processing Complete')
 
 
