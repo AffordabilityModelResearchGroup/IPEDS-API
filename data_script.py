@@ -400,7 +400,6 @@ def main():
     if args.downloadAll:
         print('Downloading All {} Files...'.format(args.prefix))
         downloader(prefix=args.prefix, suffix=args.suffix, year_begin=args.year)
-        process_csv(prefix=args.prefix, suffix=args.suffix)
         print('...Download Complete')
 
     if args.proc:
