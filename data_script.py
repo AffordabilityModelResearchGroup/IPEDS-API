@@ -20,6 +20,18 @@ from selenium.webdriver.firefox.options import Options
 # from selenium.webdriver.common.keys import Keys
 
 
+def l_string_strip(mystring, prefix):
+    if mystring.startswith(prefix):
+        return mystring[len(prefix):]
+    return mystring
+
+
+def r_string_strip(mystring, suffix):
+    if mystring.endswith(suffix):
+        return mystring[:-len(suffix)]
+    return mystring
+
+
 def scrape(output_file='./cache/ipeds_data.html'):
     """ get html page that lists its links to .zip files """
     options = webdriver.ChromeOptions()
@@ -191,6 +203,21 @@ def downloader(prefix, suffix, year_begin, check_all=False ):
                     continue
 
 
+def get_year(file_name_no_ext, prefix, suffix):
+    # strip out prefix, leaving only year i.e. hd2016 > 2016
+    # year = file_name_no_ext.lower().strip(prefix.lower())
+    year = l_string_strip(file_name_no_ext.lower(), prefix.lower())  # remove prefix
+    year = r_string_strip(year, suffix.lower())  # remove suffix
+    year = year.lstrip('_')  # remove ending dash if it exists
+    year = r_string_strip(year, '_rv')  # remove _rv from file name on revised files
+    # handle case where year is a set of two digits
+    if prefix == 'f' and suffix == '_f1a':
+        # assume we are in 20xx and the beginning of the year is the first two digits
+        year = "20" + year[:2]
+    return year
+
+
+
 def process_csv(prefix, suffix, common_column_dict=None, copy_to_database=True):
     prefix = prefix.lower()
     sql_engine = create_engine('postgresql://aff:123456@localhost:5432/affordability_model')
@@ -225,9 +252,7 @@ def process_csv(prefix, suffix, common_column_dict=None, copy_to_database=True):
         # logging
         print("...Processing " + file_name_no_ext)
 
-        # strip out prefix, leaving only year i.e. hd2016 > 2016
-        # year = file_name_no_ext.lower().strip(prefix.lower())
-        year = file_name_no_ext.lower().strip(prefix.lower()).strip(suffix.lower()).strip('_').strip('_rv')
+        year = get_year(file_name_no_ext, prefix, suffix)
 
         # add a year column
         csv["year"] = int(year)
