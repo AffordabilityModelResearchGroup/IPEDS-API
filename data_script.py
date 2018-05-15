@@ -211,9 +211,11 @@ def get_year(file_name_no_ext, prefix, suffix):
     year = year.lstrip('_')  # remove ending dash if it exists
     year = r_string_strip(year, '_rv')  # remove _rv from file name on revised files
     # handle case where year is a set of two digits
+    # This currently is only encountered with financial tables which currently appear
+    # to be formatted such that the 2016 fiscal year covers 15-16
     if prefix == 'f' and suffix == '_f1a':
         # assume we are in 20xx and the beginning of the year is the first two digits
-        year = "20" + year[:2]
+        year = "20" + year[2:]
     return year
 
 
