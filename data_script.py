@@ -27,7 +27,7 @@ def l_string_strip(mystring, prefix):
 
 
 def r_string_strip(mystring, suffix):
-    if mystring.endswith(suffix):
+    if mystring.endswith(suffix) and suffix:
         return mystring[:-len(suffix)]
     return mystring
 
