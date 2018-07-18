@@ -3,3 +3,4 @@ requests
 selenium
 pandas
 sqlalchemy
+psycopg2
